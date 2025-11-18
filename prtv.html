@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puerto Rico TV</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900">
+    <div id="app"></div>
+
+    <script>
+        const channels = [
+            {
+                name: 'Telemundo PR',
+                url: 'https://nbculocallive.akamaized.net/hls/live/2037499/puertorico/stream1/master.m3u8',
+                type: 'hls'
+            },
+            {
+                name: 'Punto 2',
+                url: 'https://nbculocallive.akamaized.net/hls/live/2037499/puertorico/stream2/master.m3u8',
+                type: 'hls'
+            },
+            {
+                name: 'WIPR TV',
+                url: 'https://cprdp.pr/hls/stream/index.m3u8',
+                type: 'hls'
+            },
+            {
+                name: 'TeleOnce',
+                url: 'https://bk7l2zwglx53-hls-live.5centscdn.com/TeleOnce/3fc63fe00050c646635f16b071cd33e2.sdp/TeleOnce/EnVivo4/chunks.m3u8',
+                type: 'hls'
+            },
+            {
+                name: 'Wapa TV',
+                url: 'https://wapa.tv/envivo/',
+                type: 'external'
+            }
+        ];
+
+        let selectedChannel = null;
+        let showPlayerModal = false;
+        let pendingChannel = null;
+        let defaultPlayer = localStorage.getItem('defaultPlayer') || null;
+        let hls = null;
+
+        function render() {
+            const app = document.getElementById('app');
+            app.innerHTML = `
+                <div class="container mx-auto p-4">
+                    <div class="text-center mb-8 pt-6">
+                        <div class="flex items-center justify-center gap-3 mb-2">
+                            <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <rect width="20" height="15" x="2" y="7" rx="2" ry="2"></rect>
+                                <polyline points="17 2 12 7 7 2"></polyline>
+                            </svg>
+                            <h1 class="text-4xl font-bold text-white">Puerto Rico TV</h1>
+                        </div>
+                        <p class="text-blue-200">Select a channel to watch live</p>
+                        ${defaultPlayer ? `
+                            <div class="mt-2 flex items-center justify-center gap-2">
+                                <span class="text-sm text-blue-300">
+                                    Default: ${defaultPlayer === 'builtin' ? 'Built-in Player' : defaultPlayer === 'mx' ? 'MX Player' : 'VLC'}
+                                </span>
+                                <button onclick="resetDefaultPlayer()" class="text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded">
+                                    Reset
+                                </button>
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                        ${channels.map((channel, index) => `
+                            <button onclick="handleChannelClick(${index})" class="bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-all p-6 rounded-xl border border-white/20 hover:border-white/40 hover:scale-105 transform duration-200">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <svg class="w-6 h-6 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <rect width="20" height="15" x="2" y="7" rx="2" ry="2"></rect>
+                                            <polyline points="17 2 12 7 7 2"></polyline>
+                                        </svg>
+                                        <span class="text-xl font-semibold text-white">${channel.name}</span>
+                                    </div>
+                                    ${channel.type === 'external' ? `
+                                        <svg class="w-5 h-5 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                        </svg>
+                                    ` : ''}
+                                </div>
+                            </button>
+                        `).join('')}
+                    </div>
+
+                    ${showPlayerModal ? `
+                        <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                            <div class="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 max-w-md w-full border border-white/20">
+                                <h3 class="text-2xl font-bold text-white mb-4 flex items-center gap-2">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                        <path d="M12 1v6m0 6v6m5.2-13.2l-4.2 4.2m0 6l4.2 4.2M1 12h6m6 0h6M4.8 4.8l4.2 4.2m6 0l4.2-4.2M4.8 19.2l4.2-4.2m6 0l4.2 4.2"></path>
+                                    </svg>
+                                    Choose Player
+                                </h3>
+                                <p class="text-blue-200 mb-6">Select a player to watch ${pendingChannel?.name}</p>
+                                
+                                <div class="space-y-3">
+                                    <div class="bg-white/10 rounded-xl p-4 border border-white/20">
+                                        <h4 class="text-white font-semibold mb-3">Built-in Player</h4>
+                                        <div class="flex gap-2">
+                                            <button onclick="handlePlayerChoice('builtin', false)" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                                Once
+                                            </button>
+                                            <button onclick="handlePlayerChoice('builtin', true)" class="flex-1 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                                Use Forever
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="bg-white/10 rounded-xl p-4 border border-white/20">
+                                        <h4 class="text-white font-semibold mb-3">MX Player</h4>
+                                        <div class="flex gap-2">
+                                            <button onclick="handlePlayerChoice('mx', false)" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                                Once
+                                            </button>
+                                            <button onclick="handlePlayerChoice('mx', true)" class="flex-1 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                                Use Forever
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="bg-white/10 rounded-xl p-4 border border-white/20">
+                                        <h4 class="text-white font-semibold mb-3">VLC Player</h4>
+                                        <div class="flex gap-2">
+                                            <button onclick="handlePlayerChoice('vlc', false)" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                                Once
+                                            </button>
+                                            <button onclick="handlePlayerChoice('vlc', true)" class="flex-1 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                                Use Forever
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button onclick="closeModal()" class="mt-6 w-full bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${selectedChannel && selectedChannel.player === 'builtin' ? `
+                        <div class="bg-black/40 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                            <div class="flex justify-between items-center mb-4">
+                                <h2 class="text-2xl font-bold text-white">${selectedChannel.name}</h2>
+                                <button onclick="closePlayer()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                    Close
+                                </button>
+                            </div>
+                            <div class="relative w-full bg-black rounded-lg overflow-hidden" style="padding-bottom: 56.25%">
+                                <video id="videoPlayer" class="absolute top-0 left-0 w-full h-full" controls playsinline></video>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${!selectedChannel && !showPlayerModal ? `
+                        <div class="text-center text-white/60 mt-12">
+                            <p class="text-lg">Choose a channel above to start watching</p>
+                            <p class="text-sm mt-2">Wapa TV will open in a new tab</p>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            if (selectedChannel && selectedChannel.player === 'builtin') {
+                initPlayer();
+            }
+        }
+
+        function handleChannelClick(index) {
+            const channel = channels[index];
+            
+            if (channel.type === 'external') {
+                window.open(channel.url, '_blank');
+                return;
+            }
+
+            if (defaultPlayer) {
+                playWithPlayer(channel, defaultPlayer);
+            } else {
+                pendingChannel = channel;
+                showPlayerModal = true;
+                render();
+            }
+        }
+
+        function playWithPlayer(channel, player) {
+            if (player === 'builtin') {
+                selectedChannel = { ...channel, player: 'builtin' };
+                showPlayerModal = false;
+                render();
+            } else if (player === 'mx') {
+                const intentUrl = `intent:${channel.url}#Intent;type=video/any;package=com.mxtech.videoplayer.ad;S.title=${encodeURIComponent(channel.name)};end`;
+                window.location.href = intentUrl;
+            } else if (player === 'vlc') {
+                const intentUrl = `intent:${channel.url}#Intent;package=org.videolan.vlc;type=video/*;S.title=${encodeURIComponent(channel.name)};end`;
+                window.location.href = intentUrl;
+            }
+        }
+
+        function handlePlayerChoice(player, setAsDefault) {
+            if (setAsDefault) {
+                localStorage.setItem('defaultPlayer', player);
+                defaultPlayer = player;
+            }
+            
+            playWithPlayer(pendingChannel, player);
+            pendingChannel = null;
+        }
+
+        function closeModal() {
+            showPlayerModal = false;
+            pendingChannel = null;
+            render();
+        }
+
+        function closePlayer() {
+            if (hls) {
+                hls.destroy();
+                hls = null;
+            }
+            selectedChannel = null;
+            render();
+        }
+
+        function resetDefaultPlayer() {
+            localStorage.removeItem('defaultPlayer');
+            defaultPlayer = null;
+            render();
+        }
+
+        function initPlayer() {
+            setTimeout(() => {
+                const video = document.getElementById('videoPlayer');
+                if (!video || !selectedChannel) return;
+
+                if (Hls.isSupported()) {
+                    hls = new Hls({
+                        enableWorker: true,
+                        lowLatencyMode: true,
+                    });
+                    
+                    hls.loadSource(selectedChannel.url);
+                    hls.attachMedia(video);
+                    
+                    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                        video.play().catch(e => console.log('Autoplay prevented:', e));
+                    });
+
+                    hls.on(Hls.Events.ERROR, (event, data) => {
+                        console.error('HLS error:', data);
+                    });
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = selectedChannel.url;
+                    video.addEventListener('loadedmetadata', () => {
+                        video.play().catch(e => console.log('Autoplay prevented:', e));
+                    });
+                }
+            }, 100);
+        }
+
+        // Initial render
+        render();
+    </script>
+</body>
+</html>
